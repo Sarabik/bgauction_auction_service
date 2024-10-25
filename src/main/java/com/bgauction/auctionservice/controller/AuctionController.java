@@ -71,16 +71,20 @@ public class AuctionController {
         return ResponseEntity.ok(savedAuction);
     }
 
-    @PutMapping("/{id}/price/{price}")
-    public ResponseEntity<?> updateCurrentPrice(@PathVariable Long id, @PathVariable BigDecimal price) {
+    @PutMapping("/{id}/price/{price}/winner/{winnerId}")
+    public ResponseEntity<?> updateCurrentPriceAndWinner(
+            @PathVariable Long id, @PathVariable BigDecimal price, @PathVariable Long winnerId) {
         if (id < 1) {
-            return new ResponseEntity<>("Invalid Auction id", HttpStatus.BAD_REQUEST);
+            return new ResponseEntity<>("Auction id must be greater then 0", HttpStatus.BAD_REQUEST);
         }
         if (!(price.compareTo(BigDecimal.ZERO) > 0)) {
-            return new ResponseEntity<>("Invalid Auction id", HttpStatus.BAD_REQUEST);
+            return new ResponseEntity<>("Current price must be greater then 0", HttpStatus.BAD_REQUEST);
+        }
+        if (winnerId < 1) {
+            return new ResponseEntity<>("Last bidder id must be greater then 0", HttpStatus.BAD_REQUEST);
         }
         try {
-            auctionService.updateCurrentPrice(id, price);
+            auctionService.updateCurrentPriceAndWinner(id, price, winnerId);
             return ResponseEntity.ok().build();
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());

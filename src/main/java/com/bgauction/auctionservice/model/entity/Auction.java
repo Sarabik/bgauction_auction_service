@@ -22,7 +22,6 @@ import lombok.Setter;
 import lombok.ToString;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
@@ -43,12 +42,12 @@ public class Auction {
 
     @NotNull
     @Positive
-    @Column(name = "seller_id")
+    @Column(name = "seller_id", updatable = false)
     private Long sellerId;
 
     @NotNull
     @Positive
-    @Column(name = "game_id")
+    @Column(name = "game_id", updatable = false)
     private Long gameId;
 
     @NotNull
