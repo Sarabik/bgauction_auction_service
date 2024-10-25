@@ -1,5 +1,7 @@
 package com.bgauction.auctionservice.service.impl;
 
+import com.bgauction.auctionservice.exception.BadRequestException;
+import com.bgauction.auctionservice.exception.NotFoundException;
 import com.bgauction.auctionservice.feign.BidClient;
 import com.bgauction.auctionservice.feign.GameClient;
 import com.bgauction.auctionservice.model.dto.GameDto;
@@ -24,15 +26,28 @@ public class AuctionServiceImpl implements AuctionService {
     private final AuctionRepository auctionRepository;
     private final GameClient gameClient;
     private final BidClient bidClient;
+    private static final String AUCTION_NOT_FOUND = "Auction with id: %d is not found";
+    private static final String AUCTION_NOT_FOUND_BY_GAME_ID = "Auction for Game with id: %d is not found";
+    private static final String GAME_NOT_FOUND = "Game with id: %d is not found";
+    private static final String GAME_MUST_BE_PUBLISHED = "Status for Game with id: %d must be PUBLISHED";
+    private static final String SELLER_IS_NOT_OWNER = "Seller id: %d is not equal to Game owner id: %d";
+    private static final String CANT_DELETE_BIDS = "Bids for Auction with id: %d can't be deleted";
+    private static final String MUST_BE_GREATER_THEN_CURRENT_PRICE = "New price for Auction with id: %d must be greater then current price";
+    private static final String CANT_DELETE_ACTIVE_AUCTION = "Auction with id: %d is ACTIVE and can't be deleted";
+    private static final String CANT_CANCEL_NOT_ACTIVE_AUCTION = "Auction with id: %d can't be canceled because it is not ACTIVE";
 
     @Override
-    public Optional<Auction> findAuctionById(Long id) {
-        return auctionRepository.findById(id);
+    public Auction findAuctionById(Long id) {
+        return checkIfExistsAndReturnAuction(id);
     }
 
     @Override
-    public Optional<Auction> findAuctionByGameId(Long gameId) {
-        return auctionRepository.findByGameId(gameId);
+    public Auction findAuctionByGameId(Long gameId) {
+        Optional<Auction> optional = auctionRepository.findByGameId(gameId);
+        if (optional.isEmpty()) {
+            throw new NotFoundException(String.format(AUCTION_NOT_FOUND_BY_GAME_ID, gameId));
+        }
+        return optional.get();
     }
 
     @Override
@@ -49,8 +64,7 @@ public class AuctionServiceImpl implements AuctionService {
     public Auction saveNewAuction(Auction auction) {
         GameDto game = getGameIfItExistAndPublished(auction.getGameId());
         if (!game.getUserId().equals(auction.getSellerId())) {
-            throw new RuntimeException(
-                    "Seller id " + auction.getSellerId() + " is not equal to game owner id " + game.getUserId());
+            throw new BadRequestException(String.format(SELLER_IS_NOT_OWNER, auction.getSellerId(), game.getUserId()));
         }
         auction.setCurrentPrice(auction.getStartPrice());
         auction.setStartTime(LocalDateTime.now());
@@ -64,53 +78,51 @@ public class AuctionServiceImpl implements AuctionService {
 
     private void changeGameStatusToInAuction(Long id) {
         ResponseEntity<Void> response = gameClient.setStatusToInAuctionForGameWithId(id);
-        if (!response.getStatusCode().equals(HttpStatus.OK)) {
-            throw new RuntimeException(
-                    "Status for Game with id " + id + " is not changed to IN_AUCTION");
+        if (!response.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
+            throw new NotFoundException(String.format(GAME_NOT_FOUND, id));
         }
     }
 
     private GameDto getGameIfItExistAndPublished(Long gameId) {
         ResponseEntity<GameDto> response = gameClient.getGameById(gameId);
         if (!response.getStatusCode().equals(HttpStatus.OK)) {
-            throw new RuntimeException("Game with id " + gameId + " not found");
+            throw new NotFoundException(String.format(GAME_NOT_FOUND, gameId));
+        } else {
+            GameDto game = response.getBody();
+            if (game == null) {
+                throw new NotFoundException(String.format(GAME_NOT_FOUND, gameId));
+            }
+            if (!game.getStatus().equals("PUBLISHED")) {
+                throw new BadRequestException(String.format(GAME_MUST_BE_PUBLISHED, gameId));
+            }
+            return game;
         }
-        GameDto game = response.getBody();
-        if (game == null) {
-            throw new RuntimeException("Game with id " + gameId + " not found");
-        }
-        if (!game.getStatus().equals("PUBLISHED")) {
-            throw new RuntimeException("Game status must be PUBLISHED");
-        }
-        return game;
     }
 
     @Override
     public void updateCurrentPriceAndWinner(Long id, BigDecimal price, Long winnerId) {
-        auctionRepository.findById(id).ifPresent(auction -> {
-            if (auction.getCurrentPrice().compareTo(price) < 0) {
-                auction.setCurrentPrice(price);
-                auction.setWinnerId(winnerId);
-                auctionRepository.save(auction);
-            } else {
-                throw new RuntimeException("New price must be greater then current price");
-            }
-        });
+        Auction auction = checkIfExistsAndReturnAuction(id);
+        if (auction.getCurrentPrice().compareTo(price) < 0) {
+            auction.setCurrentPrice(price);
+            auction.setWinnerId(winnerId);
+            auctionRepository.save(auction);
+        } else {
+            throw new BadRequestException(String.format(MUST_BE_GREATER_THEN_CURRENT_PRICE, id));
+        }
     }
 
     @Override
     public void deleteAuctionById(Long id) {
-        checkIfExistsById(id);
+        Auction auction = checkIfExistsAndReturnAuction(id);
+        if (auction.getStatus().equals(AuctionStatus.ACTIVE)) {
+            throw new BadRequestException(String.format(CANT_DELETE_ACTIVE_AUCTION, id));
+        }
         auctionRepository.deleteById(id);
     }
 
     @Override
     public void finishAuction(Long id) {
-        Optional<Auction> opt = findAuctionById(id);
-        if (opt.isEmpty()) {
-            throw new RuntimeException("Auction with ID " + id + " does not exist");
-        }
-        Auction auction = opt.get();
+        Auction auction = checkIfExistsAndReturnAuction(id);
         auction.setStatus(AuctionStatus.COMPLETED);
         auctionRepository.save(auction);
         changeGameStatusAfterAuctionFinished(auction);
@@ -120,29 +132,40 @@ public class AuctionServiceImpl implements AuctionService {
     private void deleteAllBidsForAuction(Long id) {
         ResponseEntity<Void> response = bidClient.deleteBidsByAuctionId(id);
         if (!response.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
-            throw new RuntimeException("Bids for Auction with ID " + id + " are not deleted");
+            throw new BadRequestException(String.format(CANT_DELETE_BIDS, id));
         }
     }
 
     private void changeGameStatusAfterAuctionFinished(Auction auction) {
+        ResponseEntity<Void> response;
         if (auction.getWinnerId() == null) {
-            ResponseEntity<Void> response = gameClient.setStatusToPublishedForGameWithId(auction.getGameId());
-            if (!response.getStatusCode().equals(HttpStatus.OK)) {
-                throw new RuntimeException("Status for Game with ID " + auction.getGameId() + " not updated");
-            }
+            response = gameClient.setStatusToPublishedForGameWithId(auction.getGameId());
         } else {
-            gameClient.setStatusToSoldForGameWithId(auction.getGameId());
+            response = gameClient.setStatusToSoldForGameWithId(auction.getGameId());
+        }
+        if (!response.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
+            throw new NotFoundException(String.format(GAME_NOT_FOUND, auction.getGameId()));
         }
     }
 
     @Override
     public void cancelAuction(Long id) {
-        // do I need this?
+        Auction auction = checkIfExistsAndReturnAuction(id);
+        if (!auction.getStatus().equals(AuctionStatus.ACTIVE)) {
+            throw new BadRequestException(String.format(CANT_CANCEL_NOT_ACTIVE_AUCTION, id));
+        }
+        auction.setStatus(AuctionStatus.CANCELLED);
+        ResponseEntity<Void> response = gameClient.setStatusToPublishedForGameWithId(auction.getGameId());
+        if (!response.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
+            throw new NotFoundException(String.format(GAME_NOT_FOUND, auction.getGameId()));
+        }
     }
 
-    private void checkIfExistsById(Long id) {
-        if (!auctionRepository.existsById(id)) {
-            throw new RuntimeException("Auction with ID " + id + " does not exist");
+    private Auction checkIfExistsAndReturnAuction(Long id) {
+        Optional<Auction> opt = auctionRepository.findById(id);
+        if (opt.isEmpty()) {
+            throw new NotFoundException(String.format(AUCTION_NOT_FOUND, id));
         }
+        return opt.get();
     }
 }

@@ -4,11 +4,10 @@ import com.bgauction.auctionservice.model.entity.Auction;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Optional;
 
 public interface AuctionService {
-    Optional<Auction> findAuctionById(Long id);
-    Optional<Auction> findAuctionByGameId(Long game_id);
+    Auction findAuctionById(Long id);
+    Auction findAuctionByGameId(Long game_id);
     List<Auction> findAllAuctionsBySellerId(Long seller_id);
     List<Auction> findAllActiveAuctions();
     Auction saveNewAuction(Auction auction);
