@@ -99,14 +99,4 @@ public class AuctionController {
         auctionService.finishAuction(id);
         return ResponseEntity.ok().build();
     }
-
-    @DeleteMapping("/{id}")
-    public ResponseEntity<?> deleteAuction(@PathVariable Long id) {
-        if (id < 1) {
-            return new ResponseEntity<>(AUCTION_ID_GREATER_THEN_0, HttpStatus.BAD_REQUEST);
-        }
-        auctionService.deleteAuctionById(id);
-        return ResponseEntity.noContent().build();
-    }
-
 }

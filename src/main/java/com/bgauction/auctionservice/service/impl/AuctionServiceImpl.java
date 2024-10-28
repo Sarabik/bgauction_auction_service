@@ -112,15 +112,6 @@ public class AuctionServiceImpl implements AuctionService {
     }
 
     @Override
-    public void deleteAuctionById(Long id) {
-        Auction auction = checkIfExistsAndReturnAuction(id);
-        if (auction.getStatus().equals(AuctionStatus.ACTIVE)) {
-            throw new BadRequestException(String.format(CANT_DELETE_ACTIVE_AUCTION, id));
-        }
-        auctionRepository.deleteById(id);
-    }
-
-    @Override
     public void finishAuction(Long id) {
         Auction auction = checkIfExistsAndReturnAuction(id);
         auction.setStatus(AuctionStatus.COMPLETED);
