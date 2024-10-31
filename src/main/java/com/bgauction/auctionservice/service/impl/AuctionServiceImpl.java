@@ -10,8 +10,10 @@ import com.bgauction.auctionservice.model.entity.AuctionStatus;
 import com.bgauction.auctionservice.repository.AuctionRepository;
 import com.bgauction.auctionservice.service.AuctionService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -21,6 +23,7 @@ import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
+@Log4j2
 public class AuctionServiceImpl implements AuctionService {
 
     private final AuctionRepository auctionRepository;
@@ -32,8 +35,6 @@ public class AuctionServiceImpl implements AuctionService {
     private static final String GAME_MUST_BE_PUBLISHED = "Status for Game with id: %d must be PUBLISHED";
     private static final String SELLER_IS_NOT_OWNER = "Seller id: %d is not equal to Game owner id: %d";
     private static final String CANT_DELETE_BIDS = "Bids for Auction with id: %d can't be deleted";
-    private static final String MUST_BE_GREATER_THEN_CURRENT_PRICE = "New price for Auction with id: %d must be greater then current price";
-    private static final String CANT_DELETE_ACTIVE_AUCTION = "Auction with id: %d is ACTIVE and can't be deleted";
     private static final String CANT_CANCEL_NOT_ACTIVE_AUCTION = "Auction with id: %d can't be canceled because it is not ACTIVE";
 
     @Override
@@ -101,19 +102,26 @@ public class AuctionServiceImpl implements AuctionService {
 
     @Override
     public void updateCurrentPriceAndWinner(Long id, BigDecimal price, Long winnerId) {
+        //change exists check
         Auction auction = checkIfExistsAndReturnAuction(id);
         if (auction.getCurrentPrice().compareTo(price) < 0) {
             auction.setCurrentPrice(price);
             auction.setWinnerId(winnerId);
             auctionRepository.save(auction);
-        } else {
-            throw new BadRequestException(String.format(MUST_BE_GREATER_THEN_CURRENT_PRICE, id));
         }
     }
 
-    @Override
-    public void finishAuction(Long id) {
-        Auction auction = checkIfExistsAndReturnAuction(id);
+    @Scheduled(fixedRate = 60000)
+    public void closeExpiredAuctions() {
+        List<Auction> expiredList = auctionRepository.findExpiredAuctions(LocalDateTime.now());
+        if (!expiredList.isEmpty()) {
+            for (Auction auction : expiredList) {
+                finishAuction(auction);
+            }
+        }
+    }
+
+    public void finishAuction(Auction auction) {
         auction.setStatus(AuctionStatus.COMPLETED);
         auctionRepository.save(auction);
         changeGameStatusAfterAuctionFinished(auction);

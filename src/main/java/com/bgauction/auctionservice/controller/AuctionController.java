@@ -30,8 +30,6 @@ public class AuctionController {
     private static final String AUCTION_ID_GREATER_THEN_0 = "Auction id must be greater then 0";
     private static final String GAME_ID_GREATER_THEN_0 = "Game id must be greater then 0";
     private static final String SELLER_ID_GREATER_THEN_0 = "Seller id must be greater then 0";
-    private static final String CURRENT_PRICE_GREATER_THEN_0 = "Current price must be greater then 0";
-    private static final String WINNER_ID_GREATER_THEN_0 = "Winner id must be greater then 0";
 
     @GetMapping("/{id}")
     public ResponseEntity<?> getAuctionById(@PathVariable Long id) {
@@ -73,30 +71,5 @@ public class AuctionController {
         AuctionDto savedAuction = auctionMapper.auctionToAuctionDto
                 (auctionService.saveNewAuction(auctionMapper.auctionCreationDtoToAuction(auctionDto)));
         return ResponseEntity.ok(savedAuction);
-    }
-
-    @PutMapping("/{id}/price/{price}/winner/{winnerId}")
-    public ResponseEntity<?> updateCurrentPriceAndWinner(
-            @PathVariable Long id, @PathVariable BigDecimal price, @PathVariable Long winnerId) {
-        if (id < 1) {
-            return new ResponseEntity<>(AUCTION_ID_GREATER_THEN_0, HttpStatus.BAD_REQUEST);
-        }
-        if (!(price.compareTo(BigDecimal.ZERO) > 0)) {
-            return new ResponseEntity<>(CURRENT_PRICE_GREATER_THEN_0, HttpStatus.BAD_REQUEST);
-        }
-        if (winnerId < 1) {
-            return new ResponseEntity<>(WINNER_ID_GREATER_THEN_0, HttpStatus.BAD_REQUEST);
-        }
-        auctionService.updateCurrentPriceAndWinner(id, price, winnerId);
-        return ResponseEntity.ok().build();
-    }
-
-    @PutMapping("/finish/{id}")
-    public ResponseEntity<?> finishAuction(@PathVariable Long id) {
-        if (id < 1) {
-            return new ResponseEntity<>(AUCTION_ID_GREATER_THEN_0, HttpStatus.BAD_REQUEST);
-        }
-        auctionService.finishAuction(id);
-        return ResponseEntity.ok().build();
     }
 }

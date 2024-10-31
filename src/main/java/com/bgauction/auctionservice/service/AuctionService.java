@@ -12,6 +12,5 @@ public interface AuctionService {
     List<Auction> findAllActiveAuctions();
     Auction saveNewAuction(Auction auction);
     void updateCurrentPriceAndWinner(Long id, BigDecimal price, Long winnerId);
-    void finishAuction(Long id);
     void cancelAuction(Long id);
 }

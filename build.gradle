@@ -63,9 +63,15 @@ dependencies {
 	// MySQL Driver
 	runtimeOnly 'com.mysql:mysql-connector-j:8.0.33'
 
+	// Kafka
+	implementation 'org.springframework.kafka:spring-kafka:3.2.4'
+
 	// Tests
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	testImplementation('org.springframework.kafka:spring-kafka-test:3.2.4') {
+		exclude group: 'ch.qos.logback', module: 'logback-classic'
+	}
 }
 
 tasks.withType(JavaCompile).configureEach {
