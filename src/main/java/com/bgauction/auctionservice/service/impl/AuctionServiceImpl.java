@@ -2,11 +2,13 @@ package com.bgauction.auctionservice.service.impl;
 
 import com.bgauction.auctionservice.exception.BadRequestException;
 import com.bgauction.auctionservice.exception.NotFoundException;
-import com.bgauction.auctionservice.feign.BidClient;
-import com.bgauction.auctionservice.feign.GameClient;
+import com.bgauction.auctionservice.feign.GatewayClient;
+import com.bgauction.auctionservice.kafka.event.AuctionUpdateEvent;
+import com.bgauction.auctionservice.kafka.eventPublisher.AuctionUpdateEventPublisher;
 import com.bgauction.auctionservice.model.dto.GameDto;
 import com.bgauction.auctionservice.model.entity.Auction;
 import com.bgauction.auctionservice.model.entity.AuctionStatus;
+import com.bgauction.auctionservice.model.mapper.AuctionMapper;
 import com.bgauction.auctionservice.repository.AuctionRepository;
 import com.bgauction.auctionservice.service.AuctionService;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +22,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
 
 @Service
 @RequiredArgsConstructor
@@ -27,8 +30,10 @@ import java.util.Optional;
 public class AuctionServiceImpl implements AuctionService {
 
     private final AuctionRepository auctionRepository;
-    private final GameClient gameClient;
-    private final BidClient bidClient;
+    private final GatewayClient gatewayClient;
+    private final AuctionUpdateEventPublisher auctionUpdateEventPublisher;
+    private final AuctionMapper mapper;
+
     private static final String AUCTION_NOT_FOUND = "Auction with id: %d is not found";
     private static final String AUCTION_NOT_FOUND_BY_GAME_ID = "Auction for Game with id: %d is not found";
     private static final String GAME_NOT_FOUND = "Game with id: %d is not found";
@@ -36,6 +41,7 @@ public class AuctionServiceImpl implements AuctionService {
     private static final String SELLER_IS_NOT_OWNER = "Seller id: %d is not equal to Game owner id: %d";
     private static final String CANT_DELETE_BIDS = "Bids for Auction with id: %d can't be deleted";
     private static final String CANT_CANCEL_NOT_ACTIVE_AUCTION = "Auction with id: %d can't be canceled because it is not ACTIVE";
+    private static final String MUST_BE_GREATER_THEN_CURRENT_PRICE = "New price for Auction with id: %d must be greater then current price";
 
     @Override
     public Auction findAuctionById(Long id) {
@@ -78,14 +84,14 @@ public class AuctionServiceImpl implements AuctionService {
     }
 
     private void changeGameStatusToInAuction(Long id) {
-        ResponseEntity<Void> response = gameClient.setStatusToInAuctionForGameWithId(id);
+        ResponseEntity<Void> response = gatewayClient.setStatusToInAuctionForGameWithId(id);
         if (!response.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
             throw new NotFoundException(String.format(GAME_NOT_FOUND, id));
         }
     }
 
     private GameDto getGameIfItExistAndPublished(Long gameId) {
-        ResponseEntity<GameDto> response = gameClient.getGameById(gameId);
+        ResponseEntity<GameDto> response = gatewayClient.getGameById(gameId);
         if (!response.getStatusCode().equals(HttpStatus.OK)) {
             throw new NotFoundException(String.format(GAME_NOT_FOUND, gameId));
         } else {
@@ -101,18 +107,26 @@ public class AuctionServiceImpl implements AuctionService {
     }
 
     @Override
-    public void updateCurrentPriceAndWinner(Long id, BigDecimal price, Long winnerId) {
-        //change exists check
+    public void updateCurrentPriceAndWinner(Long id, BigDecimal price, Long winnerId) throws ExecutionException, InterruptedException {
         Auction auction = checkIfExistsAndReturnAuction(id);
+        boolean ifWinnerExists = auction.getWinnerId() != null;
+        AuctionUpdateEvent outbidEvent = mapper.auctionToAuctionUpdateEvent(auction);
+        Auction updatedAuction;
         if (auction.getCurrentPrice().compareTo(price) < 0) {
             auction.setCurrentPrice(price);
             auction.setWinnerId(winnerId);
-            auctionRepository.save(auction);
+            updatedAuction = auctionRepository.save(auction);
+        } else {
+            throw new BadRequestException(String.format(MUST_BE_GREATER_THEN_CURRENT_PRICE, id));
         }
+        if (ifWinnerExists) {
+            auctionUpdateEventPublisher.publishOutbidEvent(outbidEvent);
+        }
+        auctionUpdateEventPublisher.publishNewBidEvent(mapper.auctionToAuctionUpdateEvent(updatedAuction));
     }
 
     @Scheduled(fixedRate = 60000)
-    public void closeExpiredAuctions() {
+    public void closeExpiredAuctions() throws ExecutionException, InterruptedException {
         List<Auction> expiredList = auctionRepository.findExpiredAuctions(LocalDateTime.now());
         if (!expiredList.isEmpty()) {
             for (Auction auction : expiredList) {
@@ -121,15 +135,16 @@ public class AuctionServiceImpl implements AuctionService {
         }
     }
 
-    public void finishAuction(Auction auction) {
+    public void finishAuction(Auction auction) throws ExecutionException, InterruptedException {
         auction.setStatus(AuctionStatus.COMPLETED);
-        auctionRepository.save(auction);
+        Auction updatedAuction = auctionRepository.save(auction);
         changeGameStatusAfterAuctionFinished(auction);
         deleteAllBidsForAuction(auction.getId());
+        auctionUpdateEventPublisher.publishAuctionFinishedEvent(mapper.auctionToAuctionUpdateEvent(updatedAuction));
     }
 
     private void deleteAllBidsForAuction(Long id) {
-        ResponseEntity<Void> response = bidClient.deleteBidsByAuctionId(id);
+        ResponseEntity<Void> response = gatewayClient.deleteBidsByAuctionId(id);
         if (!response.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
             throw new BadRequestException(String.format(CANT_DELETE_BIDS, id));
         }
@@ -138,9 +153,9 @@ public class AuctionServiceImpl implements AuctionService {
     private void changeGameStatusAfterAuctionFinished(Auction auction) {
         ResponseEntity<Void> response;
         if (auction.getWinnerId() == null) {
-            response = gameClient.setStatusToPublishedForGameWithId(auction.getGameId());
+            response = gatewayClient.setStatusToPublishedForGameWithId(auction.getGameId());
         } else {
-            response = gameClient.setStatusToSoldForGameWithId(auction.getGameId());
+            response = gatewayClient.setStatusToSoldForGameWithId(auction.getGameId());
         }
         if (!response.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
             throw new NotFoundException(String.format(GAME_NOT_FOUND, auction.getGameId()));
@@ -154,7 +169,7 @@ public class AuctionServiceImpl implements AuctionService {
             throw new BadRequestException(String.format(CANT_CANCEL_NOT_ACTIVE_AUCTION, id));
         }
         auction.setStatus(AuctionStatus.CANCELLED);
-        ResponseEntity<Void> response = gameClient.setStatusToPublishedForGameWithId(auction.getGameId());
+        ResponseEntity<Void> response = gatewayClient.setStatusToPublishedForGameWithId(auction.getGameId());
         if (!response.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
             throw new NotFoundException(String.format(GAME_NOT_FOUND, auction.getGameId()));
         }

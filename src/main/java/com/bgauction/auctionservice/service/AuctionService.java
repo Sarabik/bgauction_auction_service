@@ -4,6 +4,7 @@ import com.bgauction.auctionservice.model.entity.Auction;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 
 public interface AuctionService {
     Auction findAuctionById(Long id);
@@ -11,6 +12,6 @@ public interface AuctionService {
     List<Auction> findAllAuctionsBySellerId(Long seller_id);
     List<Auction> findAllActiveAuctions();
     Auction saveNewAuction(Auction auction);
-    void updateCurrentPriceAndWinner(Long id, BigDecimal price, Long winnerId);
+    void updateCurrentPriceAndWinner(Long id, BigDecimal price, Long winnerId) throws ExecutionException, InterruptedException;
     void cancelAuction(Long id);
 }
